@@ -1,27 +1,68 @@
-export __EA64__=1
+# Mac OS
+
 export __MAC__=1
-export PATH=/Users/surge/Desktop/SDK/idasdk66/bin:$PATH
 SWITCH64=-D__EA64__
-SDKPATH=/Users/surge/Desktop/SDK/idasdk66
-LIBIDAPATH=/Users/surge/Desktop/SDK/idasdk66/lib
-SRC=ida-mbn-sbl-loader.cpp
-OBJS=ida-mbn-sbl-loader.o
-PLUGIN=ida-mbn-sbl-loader.pmc
-CC=/usr/local/Cellar/gcc49/4.9.3/bin/gcc-4.9
-CXX=g++
-LD=/usr/local/Cellar/gcc49/4.9.3/bin/g++-4.9
+TOOLCHAIN=/usr/local/Cellar/gcc/5.3.0/bin/
+CXX=$(TOOLCHAIN)g++-5
+CC=$(TOOLCHAIN)gcc-5
+LD= $(CC)
 
+#LDFLAGS=-static -L/dat
 CFLAGS=-Wextra -Os -D__MAC__ -m32 -arch i386 -D__IDP__ -D__PLUGIN__ -I$(SDKPATH)/include 
-CXXFLAGS= -D__MAC__ $(SWITCH64) -I$(SDKPATH)/include 
-LDFLAGS=-dynamiclib -m32 -L/Users/surge/Desktop/SDK/idasdk66/lib -lida -Wl
+CXXFLAGS= -D__MAC__ $(SWITCH64) -I$(SDKPATH)/include -I$(SDKDIR)/ldr
+LDFLAGS=-dynamiclib -m32 -L/Users/surge/Desktop/SDK/idasdk66/lib -lida 
 
-all: ida-mbn-sbl-loader.o
+SDKPATH := /Users/surge/Desktop/SDK/idasdk66
+LIBIDAPATH := /Users/surge/Desktop/SDK/idasdk66/lib
+
+SRC= ida-mbn-sbl-loader.cpp
+OBJS= ida-mbn-sbl-loader.o
+PLUGIN := ida-mbn-sbl-loader.pmc
+
+all: $(pmc) $(ldw)
+
+pmc: $(SRC)
+
+ida-mbn-sbl-loader.cpp: $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $(PLUGIN) $(OBJS) $(LDFLAGS)
 
-ida-mbn-sbl-loader.o:
+ida-mbn-sbl-loader.o: $(SRC)
 	$(CXX) $(CFLAGS) $(SRC) -v -c
 
 clean:
-	rm $(OBJS) $(PLUGIN) 
+	rm $(PLUGIN) $(OBJS)
 	
-	findcrypt
+
+# WIN32
+export __EA64__=1
+export __WIN32__=1
+SWITCH64=-D__NT__ 
+TOOLCHAIN=/usr/local/Cellar/gcc/5.3.0/bin/
+CXX=$(TOOLCHAIN)g++-5
+CC=$(TOOLCHAIN)gcc-5
+LD= $(CC)
+
+CXXFLAGS2=-DWIN32 -D__NT__ -D__IDP__ -I$(SDKPATH)/include -I$(SDKPATH)/ldr -mrtd
+CFLAGS+=-I/Users/surge/Downloads/tcc-0.9.25-my/win32/include -I$(SDKPATH)/include -I$(SDKDIR)/ldr
+LFLAGS=/Users/surge/Desktop/SDK/idasdk66/lib/x86_win_gcc_32/ida.a -Wl, -dll -shared
+
+SDKPATH := /Users/surge/Desktop/SDK/idasdk66
+LIBIDAPATH := /Users/surge/Desktop/SDK/idasdk66/lib
+
+SRC= ida-mbn-sbl-loader.cpp
+OBJS= ida-mbn-sbl-loader.o
+PLUGIN= ida-mbn-sbl-loader.ldw
+ 
+ldw: $(SRC) 
+
+ida-mbn-sbl-loader.cpp: $(OBJS)
+	$(CXX) $(CXXFLAGS2) -o $(PLUGIN) $(OBJS) $(LDFLAGS)
+
+ida-mbn-sbl-loader.o: $(SRC)
+	$(CXX) $(CFLAGS) $(SRC) -v -c
+
+
+clean:
+	rm $(PLUGIN) $(OBJS)
+	
+	
