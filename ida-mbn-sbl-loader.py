@@ -7,13 +7,12 @@
 # can be added if theres a need, just add the header (or adjust the SBL hdr)
 # and where  to unpack from
 
-import idaapi
-from idc import *
-import struct
+from idaapi import *
 from idautils import *
-import idautils
+from idc import *
 import os
 import sys
+import struct
 
 # Magic numbers filled in for boot headers
 FLASH_PARTI_VERSION             = 3 
@@ -66,6 +65,21 @@ TLS_TYPE                  = 0x7
     
 # -----------------------------------------------------------------------
 
+class Buf(object):
+    def __init__(self, dat) :
+        self.pos = 0
+        self.dat = dat
+    def read(self, n):
+        x = self.dat[self.pos : self.pos + n]
+        self.pos += n
+        return x
+    def seek(self, pos):
+        self.pos = pos
+    def readUnpack(self, fmt):
+        sz = struct.calcsize(fmt)
+        return struct.unpack_from("<" + fmt, self.read(sz))
+    
+# -----------------------------------------------------------------------
 
 class Mbn_Hdr(object):
     # mbn header has a 40 byte header with 10 entries
@@ -107,7 +121,18 @@ class Mbn_Hdr(object):
          self.sig_ptr,
          self.sig_size,
          self.cert_chain_ptr,
-         self.cert_chain_size]
+         self.cert_chain_size,
+         self.magic_number1,
+         self.version,
+         self.OS_type,
+         self.boot_apps_parti_entry,
+         self.boot_apps_size_entry,
+         self.boot_apps_ram_loc,
+         self.reserved_ptr,
+         self.reserved_1,
+         self.reserved_2,
+         self.reserved_3
+        ]
         print ("hdr len size {} ".format(str(len(init_hdrobjs))))
         return len(init_hdrobjs)
 
@@ -413,16 +438,55 @@ def FormatHex(HexVal):
 
 # -----------------------------------------------------------------------
 
+def armcinstr(ea):
+    search_start = ea
+    search_end = search_start + 0x10000
+    addr = idc.FindBinary(search_start, SEARCH_DOWN, "?? ?? 00 EA")
+    inst = DecodeInstruction(addr)
+    kmain_addr = FindBinary(ea, SEARCH_DOWN, "?? ?? 00 FA")
+    if inst.get_canon_mnem() == 'B':
+        reset = DecodeInstruction(addr).Op1.addr
+        arm_undefined = DecodeInstruction(addr + 0x4).Op1.addr
+        arm_syscall = DecodeInstruction(addr + 0x8).Op1.addr
+        arm_prefetch_abort = DecodeInstruction(addr + 0xC).Op1.addr
+        arm_reserved = DecodeInstruction(addr + 0x10).Op1.addr
+        arm_irq = DecodeInstruction(addr + 0x14).Op1.addr
+        arm_fiq = DecodeInstruction(addr + 0x18).Op1.addr
+        MakeName(reset, "reset")
+        MakeName(arm_undefined, "arm_undefined")
+        idaapi.add_entry(arm_undefined, arm_undefined, "arm_undefined", 1)        
+        MakeName(arm_syscall, "arm_syscall")
+        idaapi.add_entry(arm_syscall, arm_syscall, "arm_syscall", 1)
+        MakeName(arm_prefetch_abort, "arm_prefetch_abort")
+        idaapi.add_entry(arm_prefetch_abort, arm_prefetch_abort, "arm_prefetch_abort", 1)
+        MakeName(arm_reserved, "arm_reserved")
+        idaapi.add_entry(arm_reserved, arm_reserved, "arm_reserved", 1)
+        MakeName(arm_irq, "arm_irq")
+        idaapi.add_entry(arm_irq, arm_irq, "arm_irq", 1)
+        MakeName(arm_fiq, "arm_fiq")
+        idaapi.add_entry(arm_fiq, arm_fiq, "arm_fiq", 1)
+        MakeName(kmain_addr, "kmain")
+        idaapi.add_entry(kmain_addr, kmain_addr, "kmain", 1)
+    if ea == idc.BADADDR:
+        idc.Message("Can't find func\n")
+        return 0
+
+    else:
+        idc.Message("new func is at 0x%08x\n" % addr)
+        MakeName(kmain_addr, "kmain")
+        idaapi.add_entry(kmain_addr, kmain_addr, "kmain", 1)
+        return 0
+
 def arminstruc():
     addr = ((str(hex(dwordAt(li, 12)))) [:-1])
     inst = DecodeInstruction(addr)
-    reset = inst(rom.image_dest_ptr).Op1.addr
-    arm_undefined = inst(rom.image_dest_ptr + 0x4).Op1.addr
-    arm_syscall = inst(rom.image_dest_ptr + 0x8).Op1.addr
-    arm_prefetch_abort = inst(rom.image_dest_ptr + 0x12).Op1.addr
-    arm_reserved = inst(rom.image_dest_ptr + 0x16).Op1.addr
-    arm_irq = inst(rom.image_dest_ptr + 0x20).Op1.addr
-    arm_fiq = inst(rom.image_dest_ptr + 0x24).Op1.addr
+    reset = inst(addr).Op1.addr
+    arm_undefined = inst(addr + 0x4).Op1.addr
+    arm_syscall = inst(addr + 0x8).Op1.addr
+    arm_prefetch_abort = inst(addr + 0x12).Op1.addr
+    arm_reserved = inst(addr + 0x16).Op1.addr
+    arm_irq = inst(addr + 0x20).Op1.addr
+    arm_fiq = inst(addr + 0x24).Op1.addr
     
     if not inst.get_canon_mnem() == 'B':
         return 0
@@ -544,12 +608,13 @@ def load_file_mbn(li, neflags, format):
    
     # initialize class Mbn_Hdr with size of input file
     init_val = li.read(li.size())
+    print ("size: " + str(len(init_val)))
     rom = Mbn_Hdr(init_val)
     
     offs = rom.Mbn_Hdrsz()
-    offset = 0x285
-    size = li.tell() 
+    offset = li.tell()
     FormatHex(rom.image_dest_ptr)
+    
     # gen the segment class object references
     rom.genMbn_segs()
     rom.getSize()
@@ -563,10 +628,10 @@ def load_file_mbn(li, neflags, format):
      rom.sig_ptr,
      rom.sig_size,
      rom.cert_chain_ptr,
-     rom.cert_chain_size) = struct.unpack_from('<IIIIIIIIII', init_val)
+     rom.cert_chain_size) = struct.unpack_from(rom.MBN_HEADER, init_val)
 
-    image_base = rom.image_dest_ptr - rom.image_src
-    image_size = rom.code_size + rom.sig_size +rom.cert_chain_size
+    image_base = rom.image_dest_ptr - rom.image_src 
+    image_size = rom.sig_size + rom.cert_chain_size
     start = 0x28
     ''' This is necessary to 4byte align the image_size'''
     if (image_size % 4) != 0:
@@ -583,14 +648,17 @@ def load_file_mbn(li, neflags, format):
     header_end =  0x140
     code_start = rom.image_dest_ptr + header_end
     code_end = code_start + rom.code_size
+    li.seek(40)
 
 
+    li.file2base(0, header_start, header_start + image_size, True)
+    
     #CODE SEGMENT
     codeseg = header_start
     AddSeg(codeseg, codeseg + code_size, 0, 1, idaapi.saRelPara, idaapi.scPub)
     SetSegClass(codeseg, "CODE")
     RenameSeg(codeseg, "CODE")
-    li.file2base(start, codeseg, codeseg + code_size, 0)
+    li.file2base(start, codeseg, codeseg + code_size,  0)
     
 
     #BOOT SEGMENT
@@ -619,12 +687,16 @@ def load_file_mbn(li, neflags, format):
         return True
 
     finddataseg(header_start)
- #   findrodataseg(header_end)
-    image_base = rom.image_dest_ptr - rom.image_src
-    image_code = (rom.image_dest_ptr + rom.image_size)
     idaapi.add_entry(header_start, header_start, "_start", 1)
-    idaapi.set_segm_addressing(idaapi.getseg(bootseg), 1)
-    idaapi.analyze_area(codeseg, codeseg + header_end)
+    idaapi.set_segm_addressing(idaapi.get_segm_by_name(".text.boot"), 1)
+    idaapi.set_segm_addressing(idaapi.get_segm_by_name("CODE"), 0)
+    idaapi.analyze_area(bootseg, header_end)
+    armcinstr(bootseg)
+    idaapi.analyze_area(bootseg, header_end)
+    idaapi.analyze_area(codeseg, code_end)
+
+
+
 
     AddIdbComment(image_base, 'Flash Part Version:  ', rom.flash_parti_ver)
     AddIdbComment(image_base, 'Source Location:     ', rom.image_src)
