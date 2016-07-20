@@ -483,10 +483,10 @@ def arminstruc():
     reset = inst(addr).Op1.addr
     arm_undefined = inst(addr + 0x4).Op1.addr
     arm_syscall = inst(addr + 0x8).Op1.addr
-    arm_prefetch_abort = inst(addr + 0x12).Op1.addr
-    arm_reserved = inst(addr + 0x16).Op1.addr
-    arm_irq = inst(addr + 0x20).Op1.addr
-    arm_fiq = inst(addr + 0x24).Op1.addr
+    arm_prefetch_abort = inst(addr + 0xC).Op1.addr
+    arm_reserved = inst(addr + 0x10).Op1.addr
+    arm_irq = inst(addr + 0x14).Op1.addr
+    arm_fiq = inst(addr + 0x18).Op1.addr
     
     if not inst.get_canon_mnem() == 'B':
         return 0
