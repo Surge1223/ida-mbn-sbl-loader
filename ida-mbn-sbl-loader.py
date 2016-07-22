@@ -440,18 +440,18 @@ def FormatHex(HexVal):
 
 def armcinstr(ea):
     search_start = ea
-    search_end = search_start + 0x10000
+    search_end = search_start + 0x100
     addr = idc.FindBinary(search_start, SEARCH_DOWN, "?? ?? 00 EA")
     inst = DecodeInstruction(addr)
-    kmain_addr = FindBinary(ea, SEARCH_DOWN, "?? ?? 00 FA")
     if inst.get_canon_mnem() == 'B':
         reset = DecodeInstruction(addr).Op1.addr
         arm_undefined = DecodeInstruction(addr + 0x4).Op1.addr
         arm_syscall = DecodeInstruction(addr + 0x8).Op1.addr
         arm_prefetch_abort = DecodeInstruction(addr + 0xC).Op1.addr
-        arm_reserved = DecodeInstruction(addr + 0x10).Op1.addr
-        arm_irq = DecodeInstruction(addr + 0x14).Op1.addr
-        arm_fiq = DecodeInstruction(addr + 0x18).Op1.addr
+        arm_data_abort = DecodeInstruction(addr + 0x10).Op1.addr
+        arm_reserved = DecodeInstruction(addr + 0x14).Op1.addr
+        arm_irq = DecodeInstruction(addr + 0x18).Op1.addr
+        arm_fiq = DecodeInstruction(addr + 0x1C).Op1.addr
         MakeName(reset, "reset")
         MakeName(arm_undefined, "arm_undefined")
         idaapi.add_entry(arm_undefined, arm_undefined, "arm_undefined", 1)        
@@ -459,23 +459,16 @@ def armcinstr(ea):
         idaapi.add_entry(arm_syscall, arm_syscall, "arm_syscall", 1)
         MakeName(arm_prefetch_abort, "arm_prefetch_abort")
         idaapi.add_entry(arm_prefetch_abort, arm_prefetch_abort, "arm_prefetch_abort", 1)
+        MakeName(arm_data_abort, "arm_data_abort")
+        idaapi.add_entry(arm_data_abort, arm_data_abort, "arm_data_abort", 1)
         MakeName(arm_reserved, "arm_reserved")
         idaapi.add_entry(arm_reserved, arm_reserved, "arm_reserved", 1)
         MakeName(arm_irq, "arm_irq")
         idaapi.add_entry(arm_irq, arm_irq, "arm_irq", 1)
         MakeName(arm_fiq, "arm_fiq")
         idaapi.add_entry(arm_fiq, arm_fiq, "arm_fiq", 1)
-        MakeName(kmain_addr, "kmain")
-        idaapi.add_entry(kmain_addr, kmain_addr, "kmain", 1)
-    if ea == idc.BADADDR:
-        idc.Message("Can't find func\n")
-        return 0
+    return True
 
-    else:
-        idc.Message("new func is at 0x%08x\n" % addr)
-        MakeName(kmain_addr, "kmain")
-        idaapi.add_entry(kmain_addr, kmain_addr, "kmain", 1)
-        return 0
 
 def arminstruc():
     addr = ((str(hex(dwordAt(li, 12)))) [:-1])
@@ -647,18 +640,17 @@ def load_file_mbn(li, neflags, format):
     header_start = rom.image_dest_ptr 
     header_end =  0x140
     code_start = rom.image_dest_ptr + header_end
-    code_end = code_start + rom.code_size
     li.seek(40)
 
-
-    li.file2base(0, header_start, header_start + image_size, True)
+#    li.file2base(0, header_start, header_start + code_size, 0)
     
     #CODE SEGMENT
     codeseg = header_start
-    AddSeg(codeseg, codeseg + code_size, 0, 1, idaapi.saRelPara, idaapi.scPub)
+    AddSeg(codeseg, codeseg + code_size, 0, 1, idaapi.saRel32Bytes, idaapi.scPub)
     SetSegClass(codeseg, "CODE")
     RenameSeg(codeseg, "CODE")
-    li.file2base(start, codeseg, codeseg + code_size,  0)
+    code_end = codeseg + code_size
+    li.file2base(start, codeseg, code_end,  0)
     
 
     #BOOT SEGMENT
@@ -668,9 +660,23 @@ def load_file_mbn(li, neflags, format):
     RenameSeg(bootseg, ".text.boot")
     li.file2base(start, bootseg, bootseg + header_end, 0)
 
+    #RO_DATA SEGMENT
+    def findrodata(image_base, data_start):
+        roseg = header_start
+        roseg_size = (code_end - data_start)
+        AddSeg(roseg, roseg + roseg_size, 0, 1, idaapi.saRelPara, idaapi.scPub)
+        SetSegClass(roseg, "CODE")
+        RenameSeg(roseg, ".rodata")
+        #li.file2base(code_size, roseg, roseg + roseg_size, 0)
+
+        
     #DATA SEGMENT    
     def finddataseg(image_base):
-        search_start = image_base
+        inst = DecodeInstruction(image_base)
+        vec_reset = image_base
+        if inst.get_canon_mnem() == 'B':
+            vec_reset = inst.Op1.addr
+        search_start = vec_reset
         search_end = search_start + 0x100
 
         data_insts = FindBinary(search_start, SEARCH_DOWN, "?? 00 ?? ?? ?? 10 ?? ?? ?? 20 ?? ??")
@@ -680,16 +686,42 @@ def load_file_mbn(li, neflags, format):
         data_start = Dword(DecodeInstruction(data_insts + 4).Op2.addr)
         data_end = Dword(DecodeInstruction(data_insts + 8).Op2.addr)
         data_end = (data_end + 3) & ~3
-
-        AddSeg(data_start, data_end, 0, 1, idaapi.saRelPara, idaapi.scPub)
+    
+        AddSeg(data_start, data_end, 0, 1, idaapi.saGroup, idaapi.scPub)
         SetSegClass(data_start, "DATA")
         RenameSeg(data_start, "DATA")
+
+
+        bss_insts = FindBinary(data_insts, SEARCH_DOWN, "34 00 ?? ?? 34 10 ?? ??")
+        if bss_insts == BADADDR or bss_insts > search_end:
+            return False
+
+        bss_start = Dword(DecodeInstruction(bss_insts + 0).Op2.addr)
+        bss_end = Dword(DecodeInstruction(bss_insts + 4).Op2.addr)
+
+        AddSeg(bss_start, bss_end, 0, 1, idaapi.saRelByte, idaapi.scPub)
+        SetSegClass(bss_start, "BSS")
+        RenameSeg(bss_start, "BSS")
+        
+        kmain_addr = FindBinary(search_start, SEARCH_DOWN, "?? ?? 00 FA")
+        if kmain_addr == BADADDR or kmain_addr > search_end:
+            return False
+
+        idc.Message("new func is at 0x%08x\n" % kmain_addr)
+        kmain_addr = DecodeInstruction(kmain_addr).Op1.addr
+        MakeName(kmain_addr, "kmain")
+        idaapi.add_entry(kmain_addr, kmain_addr, "kmain", 1)
+#        findrodata(image_base, data_start)
         return True
 
-    finddataseg(header_start)
+        
+    finddataseg(header_start)    
     idaapi.add_entry(header_start, header_start, "_start", 1)
     idaapi.set_segm_addressing(idaapi.get_segm_by_name(".text.boot"), 1)
-    idaapi.set_segm_addressing(idaapi.get_segm_by_name("CODE"), 0)
+#    idaapi.set_segm_addressing(idaapi.get_segm_by_name(".rodata"), 1)
+#    idaapi.set_segm_addressing(idaapi.get_segm_by_name("CODE"), 1)
+
+
     idaapi.analyze_area(bootseg, header_end)
     armcinstr(bootseg)
     idaapi.analyze_area(bootseg, header_end)
